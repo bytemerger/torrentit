@@ -13,7 +13,7 @@ function decodeBencode(bencodedValue: string): string | number {
             throw new Error("Invalid encoded value");
         }
         if (bencodedValue[0] === 'i'){
-            return parseInt(bencodedValue.substring(2, bencodedValue.indexOf('e')))
+            return parseInt(bencodedValue.substring(1, bencodedValue.indexOf('e')))
         }
         return bencodedValue.substring(firstColonIndex + 1);
     } else {
