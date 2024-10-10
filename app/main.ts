@@ -12,13 +12,14 @@ function decodeBencode(bencodedValue: string): string | number {
         if (firstColonIndex === -1) {
             throw new Error("Invalid encoded value");
         }
-        if (bencodedValue[0] === 'i'){
-            return parseInt(bencodedValue.substring(1, bencodedValue.indexOf('e')))
-        }
+
         return bencodedValue.substring(firstColonIndex + 1);
-    } else {
-        throw new Error("Only strings are supported at the moment");
+    } 
+    if (bencodedValue[0] === 'i'){
+        return parseInt(bencodedValue.substring(1, bencodedValue.indexOf('e')))
     }
+    
+    throw new Error("Only strings are supported at the moment");
 }
 
 const args = process.argv;
