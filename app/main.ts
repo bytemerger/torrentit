@@ -1,7 +1,7 @@
 // Examples:
 // - decodeBencode("5:hello") -> "hello"
 // - decodeBencode("10:hello12345") -> "hello12345"
-function decodeBencode(bencodedValue: string): string {
+function decodeBencode(bencodedValue: string): string | number {
     /* This function is used to decode a bencoded string
     The bencoded string is a string that is prefixed by the length of the string
     **/
@@ -11,6 +11,9 @@ function decodeBencode(bencodedValue: string): string {
         const firstColonIndex = bencodedValue.indexOf(":");
         if (firstColonIndex === -1) {
             throw new Error("Invalid encoded value");
+        }
+        if (bencodedValue[0] === 'i'){
+            return parseInt(bencodedValue.substring(2, bencodedValue.indexOf('e')))
         }
         return bencodedValue.substring(firstColonIndex + 1);
     } else {
@@ -22,7 +25,6 @@ const args = process.argv;
 const bencodedValue = args[3];
 
 if (args[2] === "decode") {
-    // Uncomment this block to pass the first stage
     try {
         const decoded = decodeBencode(bencodedValue);
         console.log(JSON.stringify(decoded));
