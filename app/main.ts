@@ -32,13 +32,11 @@ function decodeBencode(bencodedValue: string): string | number | (string | numbe
         return value
     } else if (bencodedValue[0] === 'l') {
         let arrayBencodedString = bencodedValue.substring(1, bencodedValue.lastIndexOf('e'))
-        console.log(arrayBencodedString)
         const finalArrayBencode = []
         while (arrayBencodedString.length > 0){
             //if the first string is integer get the string
             if (!isNaN(parseInt(arrayBencodedString[0]))){
                 const [value, restString] = decodeBencodeString(arrayBencodedString)
-                console.log(value, restString)
                 finalArrayBencode.push(value)
                 arrayBencodedString = restString
             }
