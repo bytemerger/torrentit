@@ -11,7 +11,6 @@ function decodeBencodeString(value: string): [string, string] {
     if (isNaN(stringLength)) {
         throw new Error("Invalid encoded value")
     } 
-    console.log(stringLength, firstColonIndex)
     return [value.substring(firstColonIndex + 1, firstColonIndex + stringLength + 1), value.substring(firstColonIndex + stringLength + 1)];
 }
 
@@ -54,7 +53,6 @@ function decodeBencode(bencodedValue: string): BEncodeValue {
     // Check if the first character is a digit
     if (!isNaN(parseInt(bencodedValue[0]))) {
         const [value, _] = decodeBencodeString(bencodedValue)
-        console.log(value)
         return value
     } 
     if (bencodedValue[0] === 'i'){
