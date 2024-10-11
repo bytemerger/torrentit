@@ -21,11 +21,9 @@ function decondeBencondeInt(value: string) : [number, string]{
 function decodeBencodeArray(value: string): [BEncodeValue, string]{
     let arrayBencodedString = value.substring(1, value.lastIndexOf('e'))
     const finalArrayBencode = []
+
     while (arrayBencodedString.length > 0){
         //if the first string is integer get the string
-        if(arrayBencodedString[0] === 'e'){
-            break
-        }
         if (!isNaN(parseInt(arrayBencodedString[0]))){
             const [value, restString] = decodeBencodeString(arrayBencodedString)
             finalArrayBencode.push(value)
@@ -41,6 +39,13 @@ function decodeBencodeArray(value: string): [BEncodeValue, string]{
             finalArrayBencode.push(value)
             arrayBencodedString = restString
         }
+        if(arrayBencodedString[0] === 'e'){
+            arrayBencodedString = arrayBencodedString.substring(1) + 'e'
+            if (arrayBencodedString.length < 3){
+                throw new Error("Invalid encoded value")
+            }
+            break
+        } 
     }
 
     return [finalArrayBencode, arrayBencodedString]
@@ -59,29 +64,7 @@ function decodeBencode(bencodedValue: string): BEncodeValue {
         const [value, _] = decondeBencondeInt(bencodedValue)
         return value
     } else if (bencodedValue[0] === 'l') {
-        let arrayBencodedString = bencodedValue.substring(1, bencodedValue.lastIndexOf('e'))
-        const finalArrayBencode = []
-        while (arrayBencodedString.length > 0){
-            //if the first string is integer get the string
-            if (!isNaN(parseInt(arrayBencodedString[0]))){
-                const [value, restString] = decodeBencodeString(arrayBencodedString)
-                finalArrayBencode.push(value)
-                arrayBencodedString = restString
-            }
-            if (arrayBencodedString[0] === 'i'){
-                const [value, restString] = decondeBencondeInt(arrayBencodedString)
-                finalArrayBencode.push(value)
-                arrayBencodedString = restString
-            }
-            if (arrayBencodedString[0] === 'l'){
-                let [value, restString] = decodeBencodeArray(arrayBencodedString)
-                finalArrayBencode.push(value)
-                if(restString[0] === 'e'){
-                    restString = restString.substring(1) + 'e'
-                }
-                arrayBencodedString = restString
-            }
-        }
+        const [finalArrayBencode, _] = decodeBencodeArray(bencodedValue)
         return finalArrayBencode 
 
     } 
