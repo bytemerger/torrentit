@@ -41,7 +41,8 @@ function decodeBencodeArray(value: string): [BEncodeValue, string]{
         }
         if(arrayBencodedString[0] === 'e'){
             arrayBencodedString = arrayBencodedString.substring(1) + 'e'
-            if (arrayBencodedString.length < 3){
+            // if there is a trailing e then bencode is not encoded properly
+            if (arrayBencodedString.length < 2){
                 throw new Error("Invalid encoded value")
             }
             break
