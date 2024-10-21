@@ -1,3 +1,4 @@
+import {readFileSync} from 'fs'
 // Examples:
 // - decodeBencode("5:hello") -> "hello"
 // - decodeBencode("10:hello12345") -> "hello12345"
@@ -114,13 +115,36 @@ function decodeBencode(bencodedValue: string): BEncodeValue {
     throw new Error("Only strings are supported at the moment");
 }
 
+function parseTorrentFile(fileName: string){
+    const file = readFileSync(fileName, {encoding: 'utf8'})
+    return decodeBencode(file) as {
+        announce: string,
+        info: {
+            length: number
+        }
+    }
+}
+
 const args = process.argv;
-const bencodedValue = args[3];
 
 if (args[2] === "decode") {
     try {
+        const bencodedValue = args[3];
         const decoded = decodeBencode(bencodedValue);
         console.log(JSON.stringify(decoded));
+    } catch (error) {
+        console.error(error.message);
+    }
+}
+
+if (args[2] === "info") {
+    try {
+        const fileName = args[3];
+        const decoded = parseTorrentFile(fileName);
+        if (!decoded['announce'] || !decoded['info']){
+            throw new Error("Invalid encoded value")
+        }
+        console.log(`Tracker URL: ${decoded['announce']} \nLength: ${decoded['info'].length}`)
     } catch (error) {
         console.error(error.message);
     }
