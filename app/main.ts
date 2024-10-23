@@ -1,4 +1,5 @@
 import {readFileSync} from 'fs'
+import {createHash} from 'crypto'
 // Examples:
 // - decodeBencode("5:hello") -> "hello"
 // - decodeBencode("10:hello12345") -> "hello12345"
@@ -116,13 +117,62 @@ function decodeBencode(bencodedValue: string): BEncodeValue {
 }
 
 function parseTorrentFile(fileName: string){
-    const file = readFileSync(fileName, {encoding: 'utf8'})
+    const file = readFileSync(fileName, {encoding: 'latin1'})
     return decodeBencode(file) as {
         announce: string,
         info: {
             length: number
         }
     }
+}
+
+function encodeNumber(num: number){
+    return `i${num}e`
+}
+function encodeString(str: string){
+    return `${str.length}:${str}`
+}
+
+function encodeList(arr: Array<BEncodeValue>){
+    let string = 'l'
+    for(const value of arr){
+        if (typeof value === 'string'){
+            string = string + `${encodeString(value)}`
+        }
+        if (typeof value === 'number'){
+            string = string +`${encodeNumber(value)}`
+        }
+        if (Array.isArray(value)){
+            string = string + encodeList(value)
+        }
+        if (typeof value === 'object' && value !== null && !Array.isArray(value) && typeof value !== 'function'){
+            string = string + encodeObject(value)
+        }
+    } 
+    string = string + 'e'
+    return string
+}
+
+function encodeObject(obj: {[key:string]: string | number | BEncodeValue}){
+    let string = ''
+    for(const key in obj){
+        const keyEncoded = encodeString(key)
+        const value = obj[key]
+        if (typeof value === 'string'){
+            string += `${keyEncoded}${encodeString(value)}`
+        }
+        if (typeof value === 'number'){
+            string += `${keyEncoded}${encodeNumber(value)}`
+        }
+        if (Array.isArray(value)){
+            string += `${keyEncoded}${encodeList(value)}`
+        }
+        if (typeof value === 'object' && !Array.isArray(value) && typeof value !== 'function'){
+            string += `${keyEncoded}${encodeObject(value)}`
+        }
+    }
+
+    return `d${string}e`;
 }
 
 const args = process.argv;
@@ -144,7 +194,9 @@ if (args[2] === "info") {
         if (!decoded['announce'] || !decoded['info']){
             throw new Error("Invalid encoded value")
         }
-        console.log(`Tracker URL: ${decoded['announce']} \nLength: ${decoded['info'].length}`)
+        const encodedInfo = encodeObject(decoded['info'])
+        const hash = createHash('sha1').update(Buffer.from(encodedInfo, 'latin1')).digest('hex')
+        console.log(`Tracker URL: ${decoded['announce']} \nLength: ${decoded['info'].length} \nInfo Hash: ${hash}`)
     } catch (error) {
         console.error(error.message);
     }
