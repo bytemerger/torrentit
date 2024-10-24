@@ -121,7 +121,9 @@ function parseTorrentFile(fileName: string){
     return decodeBencode(file) as {
         announce: string,
         info: {
-            length: number
+            length: number,
+            pieces: string,
+            "piece length": number
         }
     }
 }
@@ -175,6 +177,22 @@ function encodeObject(obj: {[key:string]: string | number | BEncodeValue}){
     return `d${string}e`;
 }
 
+function getHashes(str: string){
+    let hashHex = Buffer.from(str, 'latin1').toString('hex')
+    let list = []
+    while (hashHex.length > 0){
+        const sub = hashHex.substring(0, 40)
+        const rem = hashHex.substring(40)
+        if (!sub){
+            list.push(hashHex)
+            break
+        }
+        list.push(sub)
+        hashHex = rem
+    }
+    return list
+}
+
 const args = process.argv;
 
 if (args[2] === "decode") {
@@ -195,8 +213,9 @@ if (args[2] === "info") {
             throw new Error("Invalid encoded value")
         }
         const encodedInfo = encodeObject(decoded['info'])
+        const pieceHashes = getHashes(decoded['info']['pieces'])
         const hash = createHash('sha1').update(Buffer.from(encodedInfo, 'latin1')).digest('hex')
-        console.log(`Tracker URL: ${decoded['announce']} \nLength: ${decoded['info'].length} \nInfo Hash: ${hash}`)
+        console.log(`Tracker URL: ${decoded['announce']} \nLength: ${decoded['info'].length} \nInfo Hash: ${hash} \nPiece Length: ${decoded['info']['piece length']} \nPiece Hashes: ${pieceHashes.join('\n')}`)
     } catch (error) {
         console.error(error.message);
     }
