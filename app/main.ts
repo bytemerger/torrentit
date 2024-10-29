@@ -1,6 +1,6 @@
 import {readFileSync} from 'fs'
 import {createHash, randomBytes} from 'crypto'
-import {createConnection} from 'net'
+import {createConnection, Socket} from 'net'
 // Examples:
 // - decodeBencode("5:hello") -> "hello"
 // - decodeBencode("10:hello12345") -> "hello12345"
@@ -264,10 +264,6 @@ if (args[2] === "handshake"){
     try {
         const fileName = args[3];
         const [peerIp, port] = args[4].split(':')
-
-        const client = createConnection(parseInt(port), peerIp, function(){
-            console.log('Connected to peer');
-        })
         
         const decoded = parseTorrentFile(fileName);
         if (!decoded['announce'] || !decoded['info']){
@@ -275,13 +271,16 @@ if (args[2] === "handshake"){
         }
         const baseUrl = decoded['announce']
         /// generate random 20 bytes for peer id
-        const peer_id = randomBytes(10).toString('hex')
+        const peer_id = randomBytes(20).toString('hex')
 
         const hash = createHash('sha1').update(Buffer.from(encodeObject(decoded['info']), 'binary')).digest('hex')
 
         // length of protocol string
         let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${Buffer.alloc(8).toString('hex')}${hash}${peer_id}`
-
+        
+        const client = createConnection(parseInt(port), peerIp, function(){
+            // console.log('Connected to peer');
+        })
         client.write(Buffer.from(peerMessage, 'hex'))
 
         client.on('data', function(data){
