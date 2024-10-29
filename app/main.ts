@@ -1,5 +1,5 @@
 import {readFileSync} from 'fs'
-import {createHash} from 'crypto'
+import {createHash, randomBytes} from 'crypto'
 // Examples:
 // - decodeBencode("5:hello") -> "hello"
 // - decodeBencode("10:hello12345") -> "hello12345"
@@ -177,12 +177,12 @@ function encodeObject(obj: {[key:string]: string | number | BEncodeValue}){
     return `d${string}e`;
 }
 
-function getHashes(str: string){
-    let hashHex = Buffer.from(str, 'latin1').toString('hex')
+function getStringSubsets(str: string, hashLength: number = 40, convertToHex: boolean = true){
+    let hashHex = convertToHex ? Buffer.from(str, 'latin1').toString('hex') : str
     let list = []
     while (hashHex.length > 0){
-        const sub = hashHex.substring(0, 40)
-        const rem = hashHex.substring(40)
+        const sub = hashHex.substring(0, hashLength)
+        const rem = hashHex.substring(hashLength)
         if (!sub){
             list.push(hashHex)
             break
@@ -213,10 +213,48 @@ if (args[2] === "info") {
             throw new Error("Invalid encoded value")
         }
         const encodedInfo = encodeObject(decoded['info'])
-        const pieceHashes = getHashes(decoded['info']['pieces'])
+        const pieceHashes = getStringSubsets(decoded['info']['pieces'])
         const hash = createHash('sha1').update(Buffer.from(encodedInfo, 'latin1')).digest('hex')
         console.log(`Tracker URL: ${decoded['announce']} \nLength: ${decoded['info'].length} \nInfo Hash: ${hash} \nPiece Length: ${decoded['info']['piece length']} \nPiece Hashes: ${pieceHashes.join('\n')}`)
     } catch (error) {
         console.error(error.message);
     }
+}
+
+if (args[2] === "peers"){
+    try {
+        const fileName = args[3];
+        const decoded = parseTorrentFile(fileName);
+        if (!decoded['announce'] || !decoded['info']){
+            throw new Error("Invalid encoded value")
+        }
+        const baseUrl = decoded['announce']
+        /// generate random 20 bytes for peer id
+        const peer_id = randomBytes(10).toString('hex')
+
+        const hash = createHash('sha1').update(Buffer.from(encodeObject(decoded['info']), 'binary')).digest('hex')
+        // split the hash and get a uri encoded value
+        const info_hash_encoded = hash.match(/.{1,2}/g)?.map(byte => `%${byte}`).join('');
+
+        const searchParams = new URLSearchParams({
+            port: "6881",
+            peer_id,
+            uploaded: "0",
+            downloaded: "0",
+            left: decoded['info'].length.toString(),
+            compact: "1"
+        })
+
+        const requestRes = await fetch(`${baseUrl}?${searchParams.toString()}&info_hash=${info_hash_encoded}`)
+        const responseData = Buffer.from(await requestRes.arrayBuffer()).toString('latin1')
+        const resObjDecoded = decodeBencode(responseData) as {peers: string}
+        
+        const ipsLatin1 = getStringSubsets(resObjDecoded['peers'], 6, false)
+        const ipsWithPort = ipsLatin1.map((ip) => 
+            // get the ip buffer no and join with .
+            `${Array.from(Buffer.from(ip, 'latin1').subarray(0,4)).join('.')}:${Buffer.from(ip, 'latin1').readUint16BE(4)}`) // port number needs to use the two 16bytes
+        ipsWithPort.forEach(e=> console.log(e))
+    } catch (error) {
+        console.error(error.message);
+    } 
 }
