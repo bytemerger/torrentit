@@ -1,5 +1,6 @@
 import {readFileSync} from 'fs'
 import {createHash, randomBytes} from 'crypto'
+import {createConnection} from 'net'
 // Examples:
 // - decodeBencode("5:hello") -> "hello"
 // - decodeBencode("10:hello12345") -> "hello12345"
@@ -254,6 +255,48 @@ if (args[2] === "peers"){
             // get the ip buffer no and join with .
             `${Array.from(Buffer.from(ip, 'latin1').subarray(0,4)).join('.')}:${Buffer.from(ip, 'latin1').readUint16BE(4)}`) // port number needs to use the two 16bytes
         ipsWithPort.forEach(e=> console.log(e))
+    } catch (error) {
+        console.error(error.message);
+    } 
+}
+
+if (args[2] === "handshake"){
+    try {
+        const fileName = args[3];
+        const [peerIp, port] = args[4].split(':')
+
+        const client = createConnection(parseInt(port), peerIp, function(){
+            console.log('Connected to peer');
+        })
+        
+        const decoded = parseTorrentFile(fileName);
+        if (!decoded['announce'] || !decoded['info']){
+            throw new Error("Invalid encoded value")
+        }
+        const baseUrl = decoded['announce']
+        /// generate random 20 bytes for peer id
+        const peer_id = randomBytes(10).toString('hex')
+
+        const hash = createHash('sha1').update(Buffer.from(encodeObject(decoded['info']), 'binary')).digest('hex')
+
+        // length of protocol string
+        let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${Buffer.alloc(8).toString('hex')}${hash}${peer_id}`
+
+        client.write(Buffer.from(peerMessage, 'hex'))
+
+        client.on('data', function(data){
+            const peerId = data.toString("hex", data.byteLength - 20);
+            console.log("Peer ID:", peerId);
+            client.end()
+        })
+        client.on('error', function(err){
+            console.log("%s", err)
+        })
+
+        client.on("close", function () {
+            // console.log('Connection closed');
+        });
+
     } catch (error) {
         console.error(error.message);
     } 
