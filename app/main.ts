@@ -1,4 +1,4 @@
-import {readFileSync} from 'fs'
+import {readFileSync, writeFileSync} from 'fs'
 import {createHash, randomBytes} from 'crypto'
 import {createConnection, Socket} from 'net'
 // Examples:
@@ -196,6 +196,27 @@ function getStringSubsets(str: string, hashLength: number = 40, convertToHex: bo
 
 const args = process.argv;
 
+function getDecodedAndInfoHash(filename: string){
+    const decoded = parseTorrentFile(filename);
+    if (!decoded['announce'] || !decoded['info']){
+        throw new Error("Invalid encoded value")
+    }
+    const encodedInfo = encodeObject(decoded['info'])
+    const hash = createHash('sha1').update(Buffer.from(encodedInfo, 'latin1')).digest('hex') 
+    return {
+        decodedTorrentFile: decoded,
+        hash
+    }
+}
+
+function decodedPeerMessage(buffer: Buffer){
+    return{
+        messageLength: buffer.readInt32BE(0),
+        messageType: buffer.readIntBE(4, 1),
+        payload: buffer.subarray(5)
+    }
+}
+
 if (args[2] === "decode") {
     try {
         const bencodedValue = args[3];
@@ -209,13 +230,8 @@ if (args[2] === "decode") {
 if (args[2] === "info") {
     try {
         const fileName = args[3];
-        const decoded = parseTorrentFile(fileName);
-        if (!decoded['announce'] || !decoded['info']){
-            throw new Error("Invalid encoded value")
-        }
-        const encodedInfo = encodeObject(decoded['info'])
+        const { decodedTorrentFile: decoded, hash } = getDecodedAndInfoHash(fileName)
         const pieceHashes = getStringSubsets(decoded['info']['pieces'])
-        const hash = createHash('sha1').update(Buffer.from(encodedInfo, 'latin1')).digest('hex')
         console.log(`Tracker URL: ${decoded['announce']} \nLength: ${decoded['info'].length} \nInfo Hash: ${hash} \nPiece Length: ${decoded['info']['piece length']} \nPiece Hashes: ${pieceHashes.join('\n')}`)
     } catch (error) {
         console.error(error.message);
@@ -225,15 +241,12 @@ if (args[2] === "info") {
 if (args[2] === "peers"){
     try {
         const fileName = args[3];
-        const decoded = parseTorrentFile(fileName);
-        if (!decoded['announce'] || !decoded['info']){
-            throw new Error("Invalid encoded value")
-        }
+
+        const { decodedTorrentFile: decoded, hash } = getDecodedAndInfoHash(fileName)
         const baseUrl = decoded['announce']
         /// generate random 20 bytes for peer id
         const peer_id = randomBytes(10).toString('hex')
 
-        const hash = createHash('sha1').update(Buffer.from(encodeObject(decoded['info']), 'binary')).digest('hex')
         // split the hash and get a uri encoded value
         const info_hash_encoded = hash.match(/.{1,2}/g)?.map(byte => `%${byte}`).join('');
 
@@ -248,7 +261,7 @@ if (args[2] === "peers"){
 
         const requestRes = await fetch(`${baseUrl}?${searchParams.toString()}&info_hash=${info_hash_encoded}`)
         const responseData = Buffer.from(await requestRes.arrayBuffer()).toString('latin1')
-        const resObjDecoded = decodeBencode(responseData) as {peers: string}
+        const resObjDecoded = decodeBencode(responseData) as { peers: string }
         
         const ipsLatin1 = getStringSubsets(resObjDecoded['peers'], 6, false)
         const ipsWithPort = ipsLatin1.map((ip) => 
@@ -265,15 +278,10 @@ if (args[2] === "handshake"){
         const fileName = args[3];
         const [peerIp, port] = args[4].split(':')
         
-        const decoded = parseTorrentFile(fileName);
-        if (!decoded['announce'] || !decoded['info']){
-            throw new Error("Invalid encoded value")
-        }
-        const baseUrl = decoded['announce']
+        const { decodedTorrentFile: decoded, hash } = getDecodedAndInfoHash(fileName)
+
         /// generate random 20 bytes for peer id
         const peer_id = randomBytes(20).toString('hex')
-
-        const hash = createHash('sha1').update(Buffer.from(encodeObject(decoded['info']), 'binary')).digest('hex')
 
         // length of protocol string
         let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${Buffer.alloc(8).toString('hex')}${hash}${peer_id}`
@@ -288,6 +296,150 @@ if (args[2] === "handshake"){
             console.log("Peer ID:", peerId);
             client.end()
         })
+        client.on('error', function(err){
+            console.log("%s", err)
+        })
+
+        client.on("close", function () {
+            // console.log('Connection closed');
+        });
+
+    } catch (error) {
+        console.error(error.message);
+    } 
+}
+  
+if (args[2] === "download_piece"){
+    const outputFile = args[4]
+    const torrentFileName = args[5];
+    const pieceToDownload = parseInt(args[6]);
+
+    try {
+        
+        const { decodedTorrentFile: decoded, hash } = getDecodedAndInfoHash(torrentFileName)
+
+        const baseUrl = decoded['announce']
+        /// generate string of length 20 for peer id
+        const peer_id1 = randomBytes(10).toString('hex')
+
+        // split the hash and get a uri encoded value
+        const info_hash_encoded = hash.match(/.{1,2}/g)?.map(byte => `%${byte}`).join('');
+
+        const searchParams = new URLSearchParams({
+            port: "6881",
+            peer_id: peer_id1,
+            uploaded: "0",
+            downloaded: "0",
+            left: decoded['info'].length.toString(),
+            compact: "1"
+        })
+
+        const requestRes = await fetch(`${baseUrl}?${searchParams.toString()}&info_hash=${info_hash_encoded}`)
+        const responseData = Buffer.from(await requestRes.arrayBuffer()).toString('latin1')
+        const resObjDecoded = decodeBencode(responseData) as { peers: string }
+        
+        const ipsLatin1 = getStringSubsets(resObjDecoded['peers'], 6, false)
+        const ipsWithPort = ipsLatin1.map((ip) => 
+            // get the ip buffer no and join with .
+            `${Array.from(Buffer.from(ip, 'latin1').subarray(0,4)).join('.')}:${Buffer.from(ip, 'latin1').readUint16BE(4)}`)
+        
+        const peer_id = randomBytes(20).toString('hex')
+
+        // length of protocol string
+        let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${Buffer.alloc(8).toString('hex')}${hash}${peer_id}`
+        
+        const [peerIp, port] = ipsWithPort[0].split(':')
+                
+        const client = createConnection(parseInt(port), peerIp, function(){
+            // console.log('Connected to peer');
+        })
+        client.write(Buffer.from(peerMessage, 'hex'))
+
+        client.once('data', function(data){
+            const peerId = data.toString("hex", data.byteLength - 20);
+            console.log("Peer ID:", peerId);
+
+            // send interested message for the piece
+            client.write(Buffer.from([0,0,0,1,2]));
+
+            (function (){
+                let fileData: Buffer[] = []
+                const BYTE_LENGTH = 16 * 1024
+                // hold cut off buffer Handle Partial Messages
+                let buffer = Buffer.alloc(0);
+
+                client.on('data', function(data){
+                    // console.log("data entered")
+                    buffer = Buffer.concat([buffer, data]);
+                    while (buffer.length >= 5) {
+                        const messageLength = buffer.readInt32BE(0); // Read message length
+                        const totalLength = 4 + messageLength; // Total length of the message
+                        
+                        if (buffer.length < totalLength) {
+                            break; // Wait for more data
+                        }
+                        const msgBuffer = buffer.subarray(0, totalLength);
+                        buffer = buffer.subarray(totalLength);
+                        const message = decodedPeerMessage(msgBuffer)
+                        const pieceLength  = Math.min((decoded.info['length'] - (pieceToDownload * decoded.info['piece length'])), decoded.info['piece length'])
+
+                        // unchoke
+                        if(message.messageType === 1){
+                            let sendMessage = true
+                            let currentPieceIndex = 0
+                            while (sendMessage){
+                                const remainingPayload = pieceLength - (currentPieceIndex * BYTE_LENGTH)
+                                let payloadMessage: Buffer = Buffer.alloc(17)
+                                //first part length of the message
+                                payloadMessage.writeInt32BE(13, 0)
+                                payloadMessage.writeInt8(6, 4) 
+                                payloadMessage.writeInt32BE(pieceToDownload, 5)
+                                payloadMessage.writeInt32BE(currentPieceIndex * BYTE_LENGTH, 9)
+                                if (remainingPayload > BYTE_LENGTH){
+                                    // go for bytelength
+                                    payloadMessage.writeInt32BE(BYTE_LENGTH, 13)
+
+                                } else {
+                                    // go for the remainder of the bytes
+                                    payloadMessage.writeInt32BE(Math.abs(remainingPayload === 0 ? BYTE_LENGTH : remainingPayload), 13)
+                                    sendMessage = false
+                                }
+                                currentPieceIndex++
+                                client.write(payloadMessage)
+                            }
+                        } else if (message.messageType === 5) {
+                            console.log("Received bitfield message");
+                        } else if(message.messageType === 7) {
+                            const returnedPieceIndex = message.payload.readInt32BE(0)
+                            const returnedPieceOffset = message.payload.readInt32BE(4)
+                            fileData[returnedPieceOffset / BYTE_LENGTH] = message.payload.subarray(8)
+                            const currentDownloaded = returnedPieceOffset + message.payload.subarray(8).length
+                            if ( currentDownloaded === pieceLength){
+
+                                //lets try to compare the piece hash
+                                const pieceHashes = getStringSubsets(decoded['info']['pieces'])
+
+                                const downloadhash = createHash('sha1').update(Buffer.concat(fileData)).digest('hex')
+
+                                if (pieceHashes[pieceToDownload] === downloadhash){
+                                    // piece is correctly downloaded and complete
+
+                                    writeFileSync(outputFile, Buffer.concat(fileData));
+                                }
+                                process.exit(0);
+                            }
+                        } else {
+                            //console.log(message.messageType)
+                            /* console.log(data)
+                            console.log('new ndata came in and is no tin message type 7 \n')
+                            console.log(data.toString()) */
+                        }
+                    }
+                })
+            })()
+        })
+
+        
         client.on('error', function(err){
             console.log("%s", err)
         })
