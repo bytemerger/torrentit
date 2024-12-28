@@ -5,6 +5,14 @@ import {createConnection, Socket} from 'net'
 // - decodeBencode("5:hello") -> "hello"
 // - decodeBencode("10:hello12345") -> "hello12345"
 type BEncodeValue = string | number | Array<BEncodeValue> | { [key:string]: string | number | BEncodeValue } 
+type DecodedFile = {
+    announce: string,
+    info: {
+        length: number,
+        pieces: string,
+        "piece length": number
+    }
+}
 function decodeBencodeString(value: string): [string, string] { 
     const firstColonIndex = value.indexOf(":");
     if (firstColonIndex === -1) {
@@ -119,14 +127,7 @@ function decodeBencode(bencodedValue: string): BEncodeValue {
 
 function parseTorrentFile(fileName: string){
     const file = readFileSync(fileName, {encoding: 'latin1'})
-    return decodeBencode(file) as {
-        announce: string,
-        info: {
-            length: number,
-            pieces: string,
-            "piece length": number
-        }
-    }
+    return decodeBencode(file) as DecodedFile
 }
 
 function encodeNumber(num: number){
@@ -217,6 +218,40 @@ function decodedPeerMessage(buffer: Buffer){
     }
 }
 
+async function getPeers(hash:string, decoded: DecodedFile, peer_id: string){
+    const info_hash_encoded = hash.match(/.{1,2}/g)?.map(byte => `%${byte}`).join('');
+    const baseUrl = decoded['announce']
+
+    const searchParams = new URLSearchParams({
+        port: "6881",
+        peer_id,
+        uploaded: "0",
+        downloaded: "0",
+        left: decoded['info'].length.toString(),
+        compact: "1"
+    })
+
+    const requestRes = await fetch(`${baseUrl}?${searchParams.toString()}&info_hash=${info_hash_encoded}`)
+    const responseData = Buffer.from(await requestRes.arrayBuffer()).toString('latin1')
+    const resObjDecoded = decodeBencode(responseData) as { peers: string }
+    
+    const ipsLatin1 = getStringSubsets(resObjDecoded['peers'], 6, false)
+    const ipsWithPort = ipsLatin1.map((ip) => 
+        // get the ip buffer no and join with .
+        `${Array.from(Buffer.from(ip, 'latin1').subarray(0,4)).join('.')}:${Buffer.from(ip, 'latin1').readUint16BE(4)}`) // port number needs to use the two 16bytes
+    return ipsWithPort
+}
+
+function makeHandshake(client: Socket, hash: string){
+    /// generate random 20 bytes for peer id
+    const peer_id = randomBytes(20).toString('hex')
+
+    // length of protocol string
+    let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${Buffer.alloc(8).toString('hex')}${hash}${peer_id}`
+
+    client.write(new Uint8Array(Buffer.from(peerMessage, 'hex')))
+}
+
 if (args[2] === "decode") {
     try {
         const bencodedValue = args[3];
@@ -246,27 +281,8 @@ if (args[2] === "peers"){
         const baseUrl = decoded['announce']
         /// generate random 20 bytes for peer id
         const peer_id = randomBytes(10).toString('hex')
+        const ipsWithPort = await getPeers(hash, decoded, peer_id)
 
-        // split the hash and get a uri encoded value
-        const info_hash_encoded = hash.match(/.{1,2}/g)?.map(byte => `%${byte}`).join('');
-
-        const searchParams = new URLSearchParams({
-            port: "6881",
-            peer_id,
-            uploaded: "0",
-            downloaded: "0",
-            left: decoded['info'].length.toString(),
-            compact: "1"
-        })
-
-        const requestRes = await fetch(`${baseUrl}?${searchParams.toString()}&info_hash=${info_hash_encoded}`)
-        const responseData = Buffer.from(await requestRes.arrayBuffer()).toString('latin1')
-        const resObjDecoded = decodeBencode(responseData) as { peers: string }
-        
-        const ipsLatin1 = getStringSubsets(resObjDecoded['peers'], 6, false)
-        const ipsWithPort = ipsLatin1.map((ip) => 
-            // get the ip buffer no and join with .
-            `${Array.from(Buffer.from(ip, 'latin1').subarray(0,4)).join('.')}:${Buffer.from(ip, 'latin1').readUint16BE(4)}`) // port number needs to use the two 16bytes
         ipsWithPort.forEach(e=> console.log(e))
     } catch (error) {
         console.error(error.message);
@@ -280,16 +296,13 @@ if (args[2] === "handshake"){
         
         const { decodedTorrentFile: decoded, hash } = getDecodedAndInfoHash(fileName)
 
-        /// generate random 20 bytes for peer id
-        const peer_id = randomBytes(20).toString('hex')
-
-        // length of protocol string
-        let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${Buffer.alloc(8).toString('hex')}${hash}${peer_id}`
-        
         const client = createConnection(parseInt(port), peerIp, function(){
             // console.log('Connected to peer');
         })
-        client.write(Buffer.from(peerMessage, 'hex'))
+
+        console.log("reached here")
+        
+        makeHandshake(client, hash)
 
         client.on('data', function(data){
             const peerId = data.toString("hex", data.byteLength - 20);
@@ -318,49 +331,24 @@ if (args[2] === "download_piece"){
         
         const { decodedTorrentFile: decoded, hash } = getDecodedAndInfoHash(torrentFileName)
 
-        const baseUrl = decoded['announce']
         /// generate string of length 20 for peer id
         const peer_id1 = randomBytes(10).toString('hex')
-
-        // split the hash and get a uri encoded value
-        const info_hash_encoded = hash.match(/.{1,2}/g)?.map(byte => `%${byte}`).join('');
-
-        const searchParams = new URLSearchParams({
-            port: "6881",
-            peer_id: peer_id1,
-            uploaded: "0",
-            downloaded: "0",
-            left: decoded['info'].length.toString(),
-            compact: "1"
-        })
-
-        const requestRes = await fetch(`${baseUrl}?${searchParams.toString()}&info_hash=${info_hash_encoded}`)
-        const responseData = Buffer.from(await requestRes.arrayBuffer()).toString('latin1')
-        const resObjDecoded = decodeBencode(responseData) as { peers: string }
-        
-        const ipsLatin1 = getStringSubsets(resObjDecoded['peers'], 6, false)
-        const ipsWithPort = ipsLatin1.map((ip) => 
-            // get the ip buffer no and join with .
-            `${Array.from(Buffer.from(ip, 'latin1').subarray(0,4)).join('.')}:${Buffer.from(ip, 'latin1').readUint16BE(4)}`)
-        
-        const peer_id = randomBytes(20).toString('hex')
-
-        // length of protocol string
-        let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${Buffer.alloc(8).toString('hex')}${hash}${peer_id}`
+        const ipsWithPort = await getPeers(hash, decoded, peer_id1)
         
         const [peerIp, port] = ipsWithPort[0].split(':')
                 
         const client = createConnection(parseInt(port), peerIp, function(){
             // console.log('Connected to peer');
         })
-        client.write(Buffer.from(peerMessage, 'hex'))
+        
+        makeHandshake(client, hash)
 
         client.once('data', function(data){
             const peerId = data.toString("hex", data.byteLength - 20);
             console.log("Peer ID:", peerId);
 
             // send interested message for the piece
-            client.write(Buffer.from([0,0,0,1,2]));
+            client.write(new Uint8Array(Buffer.from([0,0,0,1,2])));
 
             (function (){
                 let fileData: Buffer[] = []
@@ -370,7 +358,7 @@ if (args[2] === "download_piece"){
 
                 client.on('data', function(data){
                     // console.log("data entered")
-                    buffer = Buffer.concat([buffer, data]);
+                    buffer = Buffer.concat([new Uint8Array(buffer), new Uint8Array(data)]);
                     while (buffer.length >= 5) {
                         const messageLength = buffer.readInt32BE(0); // Read message length
                         const totalLength = 4 + messageLength; // Total length of the message
@@ -405,7 +393,7 @@ if (args[2] === "download_piece"){
                                     sendMessage = false
                                 }
                                 currentPieceIndex++
-                                client.write(payloadMessage)
+                                client.write(new Uint8Array(payloadMessage))
                             }
                         } else if (message.messageType === 5) {
                             console.log("Received bitfield message");
@@ -426,6 +414,123 @@ if (args[2] === "download_piece"){
 
                                     writeFileSync(outputFile, Buffer.concat(fileData));
                                 }
+                                process.exit(0);
+                            }
+                        } else {
+                            //console.log(message.messageType)
+                            /* console.log(data)
+                            console.log('new ndata came in and is no tin message type 7 \n')
+                            console.log(data.toString()) */
+                        }
+                    }
+                })
+            })()
+        })
+
+        
+        client.on('error', function(err){
+            console.log("%s", err)
+        })
+
+        client.on("close", function () {
+            // console.log('Connection closed');
+        });
+
+    } catch (error) {
+        console.error(error.message);
+    } 
+}
+
+if (args[2] === "download"){
+    const outputFile = args[4]
+    const torrentFileName = args[5];
+
+    try {
+        
+        const { decodedTorrentFile: decoded, hash } = getDecodedAndInfoHash(torrentFileName)
+
+        const peer_id1 = randomBytes(10).toString('hex')
+        const ipsWithPort = await getPeers(hash, decoded, peer_id1)
+        
+        const [peerIp, port] = ipsWithPort[0].split(':')
+                
+        const client = createConnection(parseInt(port), peerIp, function(){
+            // console.log('Connected to peer');
+        })
+        
+        makeHandshake(client, hash)        
+        
+        client.once('data', function(data){
+            const peerId = data.toString("hex", data.byteLength - 20);
+            console.log("Peer ID:", peerId);
+
+            // send interested message for the piece
+            client.write(new Uint8Array(Buffer.from([0,0,0,1,2])));
+
+            (function (){
+                let fileData: Buffer[] = []
+                const BYTE_LENGTH = 16 * 1024
+                // hold cut off buffer Handle Partial Messages
+                let buffer = Buffer.alloc(0);
+
+                const pieceHashes = getStringSubsets(decoded['info']['pieces'])
+
+                client.on('data', function(data){
+                    // console.log("data entered")
+                    buffer = Buffer.concat([buffer, data]);
+                    while (buffer.length >= 5) {
+                        const messageLength = buffer.readInt32BE(0); // Read message length
+                        const totalLength = 4 + messageLength; // Total length of the message
+                        
+                        if (buffer.length < totalLength) {
+                            break; // Wait for more data
+                        }
+                        const msgBuffer = buffer.subarray(0, totalLength);
+                        buffer = buffer.subarray(totalLength);
+                        const message = decodedPeerMessage(msgBuffer)
+                        // unchoke
+                        if(message.messageType === 1){
+                            let currentPieceIndex = 0
+                            let currentBlockIndex = 0
+
+                            while (currentPieceIndex < pieceHashes.length){
+                                const pieceLength  = Math.min((decoded.info['length'] - (currentPieceIndex * decoded.info['piece length'])), decoded.info['piece length'])
+
+                                const remainingPayload = pieceLength - (currentBlockIndex * BYTE_LENGTH)
+                                let payloadMessage: Buffer = Buffer.alloc(17)
+                                //first part length of the message
+                                payloadMessage.writeInt32BE(13, 0)
+                                payloadMessage.writeInt8(6, 4) 
+                                payloadMessage.writeInt32BE(currentPieceIndex, 5)
+                                payloadMessage.writeInt32BE(currentBlockIndex * BYTE_LENGTH, 9)
+                                if (remainingPayload > BYTE_LENGTH){
+                                    // go for bytelength
+                                    payloadMessage.writeInt32BE(BYTE_LENGTH, 13)
+                                    currentBlockIndex++
+
+                                } else {
+                                    // go for the remainder of the bytes
+                                    payloadMessage.writeInt32BE(Math.abs(remainingPayload === 0 ? BYTE_LENGTH : remainingPayload), 13)
+                                    currentPieceIndex++
+                                    currentBlockIndex = 0
+                                }
+                                client.write(payloadMessage)
+                            }
+                        } else if (message.messageType === 5) {
+                            console.log("Received bitfield message");
+                        } else if(message.messageType === 7) {
+                            const returnedPieceIndex = message.payload.readInt32BE(0)
+                            const returnedPieceOffset = message.payload.readInt32BE(4)
+                            const currentDownloaded = (returnedPieceIndex * decoded.info['piece length']) + returnedPieceOffset + message.payload.subarray(8).length
+                            fileData[Math.ceil(currentDownloaded / BYTE_LENGTH)-1] = message.payload.subarray(8)
+                            if ( currentDownloaded === decoded.info['length']){
+                                console.log("saving the file")
+
+                                //lets try to compare the piece hash
+
+                                // const downloadhash = createHash('sha1').update(Buffer.concat(fileData)).digest('hex')
+                                writeFileSync(outputFile, Buffer.concat(fileData));
+
                                 process.exit(0);
                             }
                         } else {
