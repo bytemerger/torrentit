@@ -597,6 +597,23 @@ if (args[2] === "magnet_handshake"){
                 // data.subarray(48,68)
                 const peerId = data.toString("hex", 48, 68);
                 console.log("Peer ID:", peerId);
+                // the reserved bit is set
+                const reservedBit = data[25]
+                if(reservedBit === 16){
+                    console.log("there is reserved bit")
+                    // send the extension handshake
+                    const msg = {
+                        m: {
+                            "ut_metadata": 10
+                        }
+                    }
+                    const payload = Buffer.from(encodeObject(msg))
+                    const bitMsg = Buffer.concat([new Uint8Array(Buffer.from([20])), new Uint8Array(Buffer.from([0])), new Uint8Array(payload)])
+                    const messageLen = Buffer.alloc(4)
+                    messageLen.writeUInt32BE(bitMsg.byteLength)
+                    const extMsg = Buffer.concat([messageLen, bitMsg])
+                    client.write(extMsg)
+                }
                 client.end()
             })
             client.on('error', function(err){
