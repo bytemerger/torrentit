@@ -218,20 +218,19 @@ function decodedPeerMessage(buffer: Buffer){
     }
 }
 
-async function getPeers(hash:string, decoded: DecodedFile, peer_id: string){
+async function getPeers(hash:string, trackerUrl: string, left: string, peer_id: string){
     const info_hash_encoded = hash.match(/.{1,2}/g)?.map(byte => `%${byte}`).join('');
-    const baseUrl = decoded['announce']
 
     const searchParams = new URLSearchParams({
         port: "6881",
         peer_id,
         uploaded: "0",
         downloaded: "0",
-        left: decoded['info'].length.toString(),
+        left,
         compact: "1"
     })
 
-    const requestRes = await fetch(`${baseUrl}?${searchParams.toString()}&info_hash=${info_hash_encoded}`)
+    const requestRes = await fetch(`${trackerUrl}?${searchParams.toString()}&info_hash=${info_hash_encoded}`)
     const responseData = Buffer.from(await requestRes.arrayBuffer()).toString('latin1')
     const resObjDecoded = decodeBencode(responseData) as { peers: string }
     
@@ -242,12 +241,14 @@ async function getPeers(hash:string, decoded: DecodedFile, peer_id: string){
     return ipsWithPort
 }
 
-function makeHandshake(client: Socket, hash: string){
+function makeHandshake(client: Socket, hash: string, message?: string){
     /// generate random 20 bytes for peer id
     const peer_id = randomBytes(20).toString('hex')
 
+    const msg = message || Buffer.alloc(8).toString('hex')
+
     // length of protocol string
-    let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${Buffer.alloc(8).toString('hex')}${hash}${peer_id}`
+    let peerMessage = `${parseInt('19').toString(16)}${Buffer.from('BitTorrent protocol').toString('hex')}${msg}${hash}${peer_id}`
 
     client.write(new Uint8Array(Buffer.from(peerMessage, 'hex')))
 }
@@ -281,7 +282,8 @@ if (args[2] === "peers"){
         const baseUrl = decoded['announce']
         /// generate random 20 bytes for peer id
         const peer_id = randomBytes(10).toString('hex')
-        const ipsWithPort = await getPeers(hash, decoded, peer_id)
+
+        const ipsWithPort = await getPeers(hash, decoded["announce"], decoded['info'].length.toString(), peer_id)
 
         ipsWithPort.forEach(e=> console.log(e))
     } catch (error) {
@@ -333,7 +335,7 @@ if (args[2] === "download_piece"){
 
         /// generate string of length 20 for peer id
         const peer_id1 = randomBytes(10).toString('hex')
-        const ipsWithPort = await getPeers(hash, decoded, peer_id1)
+        const ipsWithPort = await getPeers(hash, decoded["announce"], decoded['info'].length.toString(), peer_id1)
         
         const [peerIp, port] = ipsWithPort[0].split(':')
                 
@@ -450,7 +452,7 @@ if (args[2] === "download"){
         const { decodedTorrentFile: decoded, hash } = getDecodedAndInfoHash(torrentFileName)
 
         const peer_id1 = randomBytes(10).toString('hex')
-        const ipsWithPort = await getPeers(hash, decoded, peer_id1)
+        const ipsWithPort = await getPeers(hash, decoded["announce"], decoded['info'].length.toString(), peer_id1)
         
         const [peerIp, port] = ipsWithPort[0].split(':')
                 
@@ -566,6 +568,41 @@ if (args[2] === "magnet_parse"){
         const magnetLinkParams = new URLSearchParams(magnet_link.substring(7))
         console.log(`Tracker URL: ${magnetLinkParams.get('tr')}`)
         console.log(`Info Hash: ${magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)}`)
+    } catch (error) {
+        console.error(error.message);
+    } 
+}
+
+if (args[2] === "magnet_handshake"){
+    try {
+        const magnet_link = args[3];
+        const magnetLinkParams = new URLSearchParams(magnet_link.substring(7))
+        const trackerUrl =  magnetLinkParams.get('tr')
+        const hash = magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)!
+        if(trackerUrl){
+            const peer_id = randomBytes(10).toString('hex')
+
+            
+            const ipsWithPort =  await getPeers(hash, trackerUrl, "16384", peer_id)
+            const [peerIp, port] = ipsWithPort[0].split(':') 
+            const extensionMessage = Buffer.alloc(8)
+            extensionMessage.writeUInt8(16, 5)
+            const client = createConnection(parseInt(port), peerIp, function(){
+                // console.log('Connected to peer');
+                makeHandshake(client, hash, extensionMessage.toString('hex'))
+            })
+            
+            client.on('data', function(data){
+                // the peer id is within 48 and 68th byte
+                // data.subarray(48,68)
+                const peerId = data.toString("hex", 48, 68);
+                console.log("Peer ID:", peerId);
+                client.end()
+            })
+            client.on('error', function(err){
+                console.log("%s", err)
+            })
+        }
     } catch (error) {
         console.error(error.message);
     } 
