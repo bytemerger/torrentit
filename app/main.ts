@@ -30,10 +30,10 @@ function decondeBencondeInt(value: string) : [number, string]{
 }
 
 function decodeBencodeArray(value: string): [BEncodeValue, string]{
-    let arrayBencodedString = value.substring(1, value.lastIndexOf('e'))
+    let arrayBencodedString = value.substring(1)
     const finalArrayBencode = []
 
-    while (arrayBencodedString.length > 0){
+    while (arrayBencodedString[0] !== 'e'){
         //if the first string is integer get the string
         if (!isNaN(parseInt(arrayBencodedString[0]))){
             const [value, restString] = decodeBencodeString(arrayBencodedString)
@@ -60,17 +60,17 @@ function decodeBencodeArray(value: string): [BEncodeValue, string]{
         } 
     }
 
-    return [finalArrayBencode, arrayBencodedString]
+    return [finalArrayBencode, arrayBencodedString.substring(1)]
 }
 
 function decodeBencodeObject(value: string){
     //d3:foo3:bar5:helloi52ee
-    let bencodedString = value.substring(1, value.lastIndexOf('e'));
+    let bencodedString = value.substring(1);
     const finalObjectBencode: {
         [key:string]: string | number | BEncodeValue
     } = {}
 
-    while (bencodedString.length > 0){
+    while (bencodedString[0] !== 'e'){
         //if the first string is integer get the string
         if(isNaN(parseInt(bencodedString[0]))){
             throw new Error("invalid object key")
@@ -98,7 +98,7 @@ function decodeBencodeObject(value: string){
             bencodedString = restString
         } 
     }
-    return [finalObjectBencode, bencodedString]
+    return [finalObjectBencode, bencodedString.substring(1)]
 }
 function decodeBencode(bencodedValue: string): BEncodeValue {
     /* This function is used to decode a bencoded string
@@ -585,16 +585,14 @@ if (args[2] === "magnet_handshake"){
             
             const ipsWithPort =  await getPeers(hash, trackerUrl, "16384", peer_id)
             const [peerIp, port] = ipsWithPort[0].split(':') 
-            const extensionMessage = Buffer.alloc(8)
-            extensionMessage.writeUInt8(16, 5)
+            const extensionReservedBit = Buffer.alloc(8)
+            extensionReservedBit.writeUInt8(16, 5)
             const client = createConnection(parseInt(port), peerIp, function(){
                 // console.log('Connected to peer');
-                makeHandshake(client, hash, extensionMessage.toString('hex'))
+                
             })
-            
-            client.on('data', function(data){
-                // the peer id is within 48 and 68th byte
-                // data.subarray(48,68)
+            makeHandshake(client, hash, extensionReservedBit.toString('hex'))
+            client.once('data', function(data){
                 const peerId = data.toString("hex", 48, 68);
                 console.log("Peer ID:", peerId);
                 // the reserved bit is set
@@ -604,23 +602,53 @@ if (args[2] === "magnet_handshake"){
                     // send the extension handshake
                     const msg = {
                         m: {
-                            "ut_metadata": 10
+                            "ut_metadata": 10,
+                            ut_pex: 2,
                         }
                     }
                     const payload = Buffer.from(encodeObject(msg))
                     const bitMsg = Buffer.concat([new Uint8Array(Buffer.from([20])), new Uint8Array(Buffer.from([0])), new Uint8Array(payload)])
                     const messageLen = Buffer.alloc(4)
-                    messageLen.writeUInt32BE(bitMsg.byteLength)
+                    messageLen.writeUInt32BE(bitMsg.length)
                     const extMsg = Buffer.concat([messageLen, bitMsg])
                     client.write(extMsg)
+                    console.log("message sent")
                 }
-                client.end()
-            })
+                (function(){
+                    // hold cut off buffer Handle Partial Messages
+                    let buffer = Buffer.alloc(0);
+                    client.on('data', function(data){
+                        // the peer id is within 48 and 68th byte
+                        // data.subarray(48,68)
+                        console.log("received extra data")
+                        buffer = Buffer.concat([buffer, data]);
+                        while (buffer.length >= 5) {
+                            const messageLength = buffer.readInt32BE(0); // Read message length
+                            const totalLength = 4 + messageLength; // Total length of the message
+                            
+                            if (buffer.length < totalLength) {
+                                break; // Wait for more data
+                            }
+                            const msgBuffer = buffer.subarray(0, totalLength);
+                            buffer = buffer.subarray(totalLength);
+                            const message = decodedPeerMessage(msgBuffer) 
+                            if (message.messageType === 5) {
+                                console.log("Received bitfield message");
+                            } else if (message.messageType === 20){
+                                const extensionMetadataObj = decodeBencode(message.payload.subarray(1).toString('latin1'))
+                                console.log(`Peer Metadata Extension ID: ${extensionMetadataObj['m']['ut_metadata']}`)
+                                client.end()
+                            }
+                        }
+                    })
+                }()) 
+            }) 
+            
             client.on('error', function(err){
                 console.log("%s", err)
             })
         }
     } catch (error) {
-        console.error(error.message);
+        console.error(error);
     } 
 }
