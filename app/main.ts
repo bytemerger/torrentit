@@ -671,7 +671,7 @@ if (args[2] === "magnet_info"){
             makeHandshake(client, hash, extensionReservedBit.toString('hex'))
             console.log("nessage sent")
             let buffer = Buffer.alloc(0);
-            let peerExtensionMessageId
+            let peerExtensionMessageId: number | undefined = undefined
             client.on('data', function(data){
                 buffer = Buffer.concat([buffer, data]);
                 if ( buffer[0] === 19 &&
@@ -718,7 +718,24 @@ if (args[2] === "magnet_info"){
                     if (message.messageType === 5) {
                         console.log("Received bitfield message");
                     } else if (message.messageType === 20){
+                        console.log("came here")
+                        console.log(peerExtensionMessageId)
+                        console.log(message.payload[0])
+                        console.log(message.payload)
+                        if (peerExtensionMessageId){
+                            const [firstMeta, metaPieceContent] = message.payload.subarray(1).toString('latin1').split('ee')
+                            const extensionMetadataObj = decodeBencode(firstMeta+'ee')
+                            const pieceContent =  decodeBencode(metaPieceContent)
+                            const hash = createHash('sha1').update(Buffer.from(metaPieceContent, 'latin1')).digest('hex')
+                            const pieceHashes = getStringSubsets(pieceContent['pieces'])
+                            console.log(`Tracker URL: ${trackerUrl}`)
+                            console.log(`Length: ${pieceContent['length']} \nInfo Hash: ${hash} \nPiece Length: ${pieceContent['piece length']} \nPiece Hashes: ${pieceHashes.join('\n')}`) 
+                            client.end()
+                            return
+                            //client.end()
+                        }
                         const extensionMetadataObj = decodeBencode(message.payload.subarray(1).toString('latin1'))
+                        console.log(extensionMetadataObj)
                         peerExtensionMessageId =  extensionMetadataObj['m']['ut_metadata']
                         // send message for metada
 
@@ -730,7 +747,9 @@ if (args[2] === "magnet_info"){
                         messageLen.writeUInt32BE(bitMsgExt.byteLength) 
                         const fullMsg = Buffer.concat([messageLen, bitMsgExt])
                         client.write(new Uint8Array(fullMsg))
-                        client.end()
+                        //sent the metadata extension message
+
+                        //client.end()
                     }
                 }
             }) 
