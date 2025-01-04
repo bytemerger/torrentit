@@ -584,7 +584,7 @@ if (args[2] === "magnet_handshake"){
                 // console.log('Connected to peer');
                 
             })
-                        
+
             makeHandshake(client, hash, extensionReservedBit.toString('hex'))
             console.log("nessage sent")
             let buffer = Buffer.alloc(0);
@@ -635,6 +635,101 @@ if (args[2] === "magnet_handshake"){
                     } else if (message.messageType === 20){
                         const extensionMetadataObj = decodeBencode(message.payload.subarray(1).toString('latin1'))
                         console.log(`Peer Metadata Extension ID: ${extensionMetadataObj['m']['ut_metadata']}`)
+                        client.end()
+                    }
+                }
+            }) 
+            
+            client.on('error', function(err){
+                console.log("%s", err)
+            })
+        }
+    } catch (error) {
+        console.error(error);
+    } 
+}
+
+if (args[2] === "magnet_info"){
+    try {
+        const magnet_link = args[3];
+        const magnetLinkParams = new URLSearchParams(magnet_link.substring(7))
+        const trackerUrl =  magnetLinkParams.get('tr')
+        const hash = magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)!
+        if(trackerUrl){
+            const peer_id = randomBytes(10).toString('hex')
+
+            
+            const ipsWithPort =  await getPeers(hash, trackerUrl, "999", peer_id)
+            const [peerIp, port] = ipsWithPort[0].split(':') 
+            const extensionReservedBit = Buffer.alloc(8)
+            extensionReservedBit.writeUInt8(16, 5)
+            const client = createConnection(parseInt(port), peerIp, function(){
+                // console.log('Connected to peer');
+                
+            })
+                        
+            makeHandshake(client, hash, extensionReservedBit.toString('hex'))
+            console.log("nessage sent")
+            let buffer = Buffer.alloc(0);
+            let peerExtensionMessageId
+            client.on('data', function(data){
+                buffer = Buffer.concat([buffer, data]);
+                if ( buffer[0] === 19 &&
+                    buffer.subarray(1, 20).toString() === "BitTorrent protocol") {
+                    const peerId = data.toString("hex", 48, 68);
+                    console.log("Peer ID:", peerId);
+                    buffer = data.subarray(68)
+                    // the reserved bit is set
+                    const reservedBit = data[25]
+                    if(reservedBit === 16){
+                        console.log("there is reserved bit")
+                        // send the extension handshake
+                        const msg = {
+                            m: {
+                                "ut_metadata": 10,
+                                ut_pex: 2,
+                            }
+                        }
+                        const payload = Buffer.from(encodeObject(msg))
+                        const bitMsg = Buffer.concat([new Uint8Array(Buffer.from([20])), new Uint8Array(Buffer.from([0])), new Uint8Array(payload)])
+                        const messageLen = Buffer.alloc(4)
+                        messageLen.writeUInt32BE(bitMsg.byteLength)
+                        const extMsg = Buffer.concat([messageLen, bitMsg])
+                        client.write(extMsg)
+                        console.log("message sent")
+                        
+                    }
+                }
+                
+                while (buffer.length >= 4) {
+                    const messageLength = buffer.readInt32BE(0); // Read message length
+                    const totalLength = 4 + messageLength; // Total length of the message
+                    
+                    if (buffer.length < totalLength) {
+                        break; // Wait for more data
+                    }
+                    const msgBuffer = buffer.subarray(0, totalLength);
+                    buffer = buffer.subarray(totalLength);
+                    const message = decodedPeerMessage(msgBuffer)
+                    if (messageLength === 0) {
+                        // Keep-alive message
+                        continue;
+                        }
+                    if (message.messageType === 5) {
+                        console.log("Received bitfield message");
+                    } else if (message.messageType === 20){
+                        const extensionMetadataObj = decodeBencode(message.payload.subarray(1).toString('latin1'))
+                        peerExtensionMessageId =  extensionMetadataObj['m']['ut_metadata']
+                        // send message for metada
+
+                        // send the meta data request message
+                        const msg = {'msg_type': 0, 'piece': 0}
+                        const payloadExt = Buffer.from(encodeObject(msg))
+                        const bitMsgExt = Buffer.concat([new Uint8Array(Buffer.from([20])), new Uint8Array(Buffer.from([peerExtensionMessageId])), new Uint8Array(payloadExt)])
+                        const messageLen = Buffer.alloc(4)
+                        messageLen.writeUInt32BE(bitMsgExt.byteLength) 
+                        const fullMsg = Buffer.concat([messageLen, bitMsgExt])
+                        client.write(new Uint8Array(fullMsg))
                         client.end()
                     }
                 }
