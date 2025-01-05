@@ -1,5 +1,5 @@
 import {createConnection, Socket} from 'net'
-import { decodeBencode, getDecodedTorrentFileAndInfoHash, getPeers, getStringSubsets, makeHandshake } from './utils';
+import { decodeBencode, decodeMagnetLink, getDecodedTorrentFileAndInfoHash, getPeers, getStringSubsets, makeHandshake } from './utils';
 import { handleMessages, sendInterestedMessage } from './messages';
 
 const args = process.argv;
@@ -108,8 +108,9 @@ if (args[2] === "magnet_parse"){
     try {
         const magnet_link = args[3];
         const magnetLinkParams = new URLSearchParams(magnet_link.substring(7))
-        console.log(`Tracker URL: ${magnetLinkParams.get('tr')}`)
-        console.log(`Info Hash: ${magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)}`)
+        const { trackerUrl, hash } = decodeMagnetLink(magnet_link)
+        console.log(`Tracker URL: ${trackerUrl}`)
+        console.log(`Info Hash: ${hash}`)
     } catch (error) {
         console.error((error as { message: string }).message);
     } 
@@ -118,9 +119,7 @@ if (args[2] === "magnet_parse"){
 if (args[2] === "magnet_handshake"){
     try {
         const magnet_link = args[3];
-        const magnetLinkParams = new URLSearchParams(magnet_link.substring(7))
-        const trackerUrl =  magnetLinkParams.get('tr')
-        const hash = magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)!
+        const { trackerUrl, hash } = decodeMagnetLink(magnet_link)
         if(trackerUrl){
             const ipsWithPort =  await getPeers(hash, trackerUrl, "999")
             const [peerIp, port] = ipsWithPort[0].split(':') 
@@ -140,9 +139,7 @@ if (args[2] === "magnet_handshake"){
 if (args[2] === "magnet_info"){
     try {
         const magnet_link = args[3];
-        const magnetLinkParams = new URLSearchParams(magnet_link.substring(7))
-        const trackerUrl =  magnetLinkParams.get('tr')
-        const hash = magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)!
+        const { trackerUrl, hash } = decodeMagnetLink(magnet_link) 
         if(trackerUrl){
             const ipsWithPort =  await getPeers(hash, trackerUrl, "999")
             const [peerIp, port] = ipsWithPort[0].split(':') 
@@ -164,10 +161,7 @@ if (args[2] === "magnet_download_piece"){
         const magnet_link = args[5];
         const outputFile = args[4]
         const pieceToDownload = parseInt(args[6]);
-
-        const magnetLinkParams = new URLSearchParams(magnet_link.substring(7))
-        const trackerUrl =  magnetLinkParams.get('tr')
-        const hash = magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)!
+        const { trackerUrl, hash } = decodeMagnetLink(magnet_link)
         if(trackerUrl){
             const ipsWithPort =  await getPeers(hash, trackerUrl, "999")
             const [peerIp, port] = ipsWithPort[0].split(':') 
@@ -177,6 +171,27 @@ if (args[2] === "magnet_download_piece"){
                 // console.log('Connected to peer');
                 makeHandshake(client, hash, extensionReservedBit.toString('hex'))
                 handleMessages(client, args[2], trackerUrl, undefined, outputFile, pieceToDownload)
+            })
+        }
+    } catch (error) {
+        console.error(error);
+    } 
+}
+
+if (args[2] === "magnet_download"){
+    try {
+        const magnet_link = args[5];
+        const outputFile = args[4]
+        const { trackerUrl, hash } = decodeMagnetLink(magnet_link)
+        if(trackerUrl){
+            const ipsWithPort =  await getPeers(hash, trackerUrl, "999")
+            const [peerIp, port] = ipsWithPort[0].split(':') 
+            const extensionReservedBit = Buffer.alloc(8)
+            extensionReservedBit.writeUInt8(16, 5)
+            const client = createConnection(parseInt(port), peerIp, function(){
+                // console.log('Connected to peer');
+                makeHandshake(client, hash, extensionReservedBit.toString('hex'))
+                handleMessages(client, args[2], trackerUrl, undefined, outputFile)
             })
         }
     } catch (error) {

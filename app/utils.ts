@@ -240,3 +240,12 @@ export function decodedPeerMessage(buffer: Buffer){
         payload: buffer.subarray(5)
     }
 }
+
+export function decodeMagnetLink(link: string){
+    const magnetLinkParams = new URLSearchParams(link.substring(7))
+    const trackerUrl =  magnetLinkParams.get('tr')
+    const hash = magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)!
+    return {
+        hash, trackerUrl
+    }
+}
