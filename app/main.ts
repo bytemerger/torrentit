@@ -718,15 +718,12 @@ if (args[2] === "magnet_info"){
                     if (message.messageType === 5) {
                         console.log("Received bitfield message");
                     } else if (message.messageType === 20){
-                        console.log("came here")
-                        console.log(peerExtensionMessageId)
-                        console.log(message.payload[0])
-                        console.log(message.payload)
                         if (peerExtensionMessageId){
-                            const [firstMeta, metaPieceContent] = message.payload.subarray(1).toString('latin1').split('ee')
-                            const extensionMetadataObj = decodeBencode(firstMeta+'ee')
-                            const pieceContent =  decodeBencode(metaPieceContent)
-                            const hash = createHash('sha1').update(Buffer.from(metaPieceContent, 'latin1')).digest('hex')
+                            const fullContent = message.payload.subarray(1)
+                            const metaPieceInfo = decodeBencode(fullContent.toString('latin1'))
+                            const pieceContentBen = fullContent.subarray(fullContent.length - metaPieceInfo['total_size']).toString('latin1')
+                            const pieceContent =  decodeBencode(pieceContentBen)
+                            const hash = createHash('sha1').update(Buffer.from(pieceContentBen, 'latin1')).digest('hex')
                             const pieceHashes = getStringSubsets(pieceContent['pieces'])
                             console.log(`Tracker URL: ${trackerUrl}`)
                             console.log(`Length: ${pieceContent['length']} \nInfo Hash: ${hash} \nPiece Length: ${pieceContent['piece length']} \nPiece Hashes: ${pieceHashes.join('\n')}`) 
@@ -751,6 +748,184 @@ if (args[2] === "magnet_info"){
 
                         //client.end()
                     }
+                }
+            }) 
+            
+            client.on('error', function(err){
+                console.log("%s", err)
+            })
+        }
+    } catch (error) {
+        console.error(error);
+    } 
+}
+
+if (args[2] === "magnet_download_piece"){
+    try {
+        const magnet_link = args[5];
+        const outputFile = args[4]
+        const pieceToDownload = parseInt(args[6]);
+
+        const magnetLinkParams = new URLSearchParams(magnet_link.substring(7))
+        const trackerUrl =  magnetLinkParams.get('tr')
+        const hash = magnetLinkParams.get('xt')?.substring(magnetLinkParams.get('xt')?.lastIndexOf(":")! + 1)!
+        if(trackerUrl){
+            const peer_id = randomBytes(10).toString('hex')
+
+            
+            const ipsWithPort =  await getPeers(hash, trackerUrl, "999", peer_id)
+            const [peerIp, port] = ipsWithPort[0].split(':') 
+            const extensionReservedBit = Buffer.alloc(8)
+            extensionReservedBit.writeUInt8(16, 5)
+            const client = createConnection(parseInt(port), peerIp, function(){
+                // console.log('Connected to peer');
+                
+            })
+                        
+            makeHandshake(client, hash, extensionReservedBit.toString('hex'))
+            console.log("nessage sent")
+            let buffer = Buffer.alloc(0);
+            let torrentInfo: DecodedFile['info'] = {
+                length: 0,
+                "piece length": 0,
+                pieces: ''
+            }
+            let peerExtensionMessageId: number | undefined = undefined
+            let fileData: Buffer[] = []
+            client.on('data', function(data){
+                const BYTE_LENGTH = 16 * 1024
+                
+                buffer = Buffer.concat([buffer, data]);
+                if ( buffer[0] === 19 &&
+                    buffer.subarray(1, 20).toString() === "BitTorrent protocol") {
+                    const peerId = data.toString("hex", 48, 68);
+                    console.log("Peer ID:", peerId);
+                    buffer = data.subarray(68)
+                    // the reserved bit is set
+                    const reservedBit = data[25]
+                    if(reservedBit === 16){
+                        console.log("there is reserved bit")
+                        // send the extension handshake
+                        const msg = {
+                            m: {
+                                "ut_metadata": 10,
+                                ut_pex: 2,
+                            }
+                        }
+                        const payload = Buffer.from(encodeObject(msg))
+                        const bitMsg = Buffer.concat([new Uint8Array(Buffer.from([20])), new Uint8Array(Buffer.from([0])), new Uint8Array(payload)])
+                        const messageLen = Buffer.alloc(4)
+                        messageLen.writeUInt32BE(bitMsg.byteLength)
+                        const extMsg = Buffer.concat([messageLen, bitMsg])
+                        client.write(extMsg)
+                        console.log("message sent")
+                        
+                    }
+                }
+                
+                while (buffer.length >= 4) {
+                    const messageLength = buffer.readInt32BE(0); // Read message length
+                    const totalLength = 4 + messageLength; // Total length of the message
+                    
+                    if (buffer.length < totalLength) {
+                        break; // Wait for more data
+                    }
+                    const msgBuffer = buffer.subarray(0, totalLength);
+                    buffer = buffer.subarray(totalLength);
+                    const message = decodedPeerMessage(msgBuffer)
+                    const pieceLength  = Math.min((torrentInfo['length'] - (pieceToDownload * torrentInfo['piece length'])), torrentInfo['piece length'])
+
+                    if (messageLength === 0) {
+                        // Keep-alive message
+                        continue;
+                        }
+                    if (message.messageType === 5) {
+                        console.log("Received bitfield message");
+                    } else if (message.messageType === 20){
+                        if (peerExtensionMessageId){
+                            const fullContent = message.payload.subarray(1)
+                            const metaPieceInfo = decodeBencode(fullContent.toString('latin1'))
+                            const pieceContentBen = fullContent.subarray(fullContent.length - metaPieceInfo['total_size']).toString('latin1')
+                            torrentInfo =  decodeBencode(pieceContentBen) as DecodedFile['info']
+                            const hash = createHash('sha1').update(Buffer.from(pieceContentBen, 'latin1')).digest('hex')
+                            const pieceHashes = getStringSubsets(torrentInfo['pieces'])
+                            console.log(`Tracker URL: ${trackerUrl}`)
+                            console.log(`Length: ${torrentInfo['length']} \nInfo Hash: ${hash} \nPiece Length: ${torrentInfo['piece length']} \nPiece Hashes: ${pieceHashes.join('\n')}`) 
+                            //send intrested message
+                            client.write(new Uint8Array(Buffer.from([0,0,0,1,2])));
+                            console.log('sent intreseted message')
+                            //client.end()
+                        } else {
+                            const extensionMetadataObj = decodeBencode(message.payload.subarray(1).toString('latin1'))
+                            console.log(extensionMetadataObj)
+                            peerExtensionMessageId =  extensionMetadataObj['m']['ut_metadata']
+                            // send message for metada
+    
+                            // send the meta data request message
+                            const msg = {'msg_type': 0, 'piece': 0}
+                            const payloadExt = Buffer.from(encodeObject(msg))
+                            const bitMsgExt = Buffer.concat([new Uint8Array(Buffer.from([20])), new Uint8Array(Buffer.from([peerExtensionMessageId])), new Uint8Array(payloadExt)])
+                            const messageLen = Buffer.alloc(4)
+                            messageLen.writeUInt32BE(bitMsgExt.byteLength) 
+                            const fullMsg = Buffer.concat([messageLen, bitMsgExt])
+                            client.write(new Uint8Array(fullMsg))
+                            //sent the metadata extension message
+                        }
+                        //client.end()
+                    } else if (message.messageType === 1){
+                        let sendMessage = true
+                        let currentPieceIndex = 0
+                        console.log("we got an unchoke", torrentInfo)
+                        while (sendMessage){
+                            const remainingPayload = pieceLength - (currentPieceIndex * BYTE_LENGTH)
+                            let payloadMessage: Buffer = Buffer.alloc(17)
+                            //first part length of the message
+                            payloadMessage.writeInt32BE(13, 0)
+                            payloadMessage.writeInt8(6, 4) 
+                            payloadMessage.writeInt32BE(pieceToDownload, 5)
+                            payloadMessage.writeInt32BE(currentPieceIndex * BYTE_LENGTH, 9)
+                            if (remainingPayload > BYTE_LENGTH){
+                                // go for bytelength
+                                payloadMessage.writeInt32BE(BYTE_LENGTH, 13)
+
+                            } else {
+                                // go for the remainder of the bytes
+                                payloadMessage.writeInt32BE(Math.abs(remainingPayload === 0 ? BYTE_LENGTH : remainingPayload), 13)
+                                sendMessage = false
+                            }
+                            currentPieceIndex++
+                            client.write(new Uint8Array(payloadMessage))
+                        }
+                    } else if(message.messageType === 7) {
+                        console.log("received a piece")
+                        const returnedPieceIndex = message.payload.readInt32BE(0)
+                        const returnedPieceOffset = message.payload.readInt32BE(4)
+                        fileData[returnedPieceOffset / BYTE_LENGTH] = message.payload.subarray(8)
+                        const currentDownloaded = returnedPieceOffset + message.payload.subarray(8).length
+                        console.log(currentDownloaded)
+                        if ( currentDownloaded === pieceLength){
+
+                            //lets try to compare the piece hash
+                            const pieceHashes = getStringSubsets(torrentInfo['pieces'])
+
+                            const downloadhash = createHash('sha1').update(Buffer.concat(fileData)).digest('hex')
+
+                            if (pieceHashes[pieceToDownload] === downloadhash){
+                                // piece is correctly downloaded and complete
+
+                                writeFileSync(outputFile, Buffer.concat(fileData));
+                            }
+                            process.exit(0);
+                        }
+                    } else {
+                        //console.log(message.messageType)
+                        /* console.log(data)
+                        console.log('new ndata came in and is no tin message type 7 \n')
+                        console.log(data.toString()) */
+                    }
+                    
+
+            
                 }
             }) 
             
