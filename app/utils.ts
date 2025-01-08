@@ -84,10 +84,6 @@ function decodeBencodeObject(value: string){
     return [finalObjectBencode, bencodedString.substring(1)]
 }
 export function decodeBencode(bencodedValue: string): BEncodeValue {
-    /* This function is used to decode a bencoded string
-    The bencoded string is a string that is prefixed by the length of the string
-    **/
-
     // Check if the first character is a digit
     if (!isNaN(parseInt(bencodedValue[0]))) {
         const [value, _] = decodeBencodeString(bencodedValue)
@@ -105,7 +101,7 @@ export function decodeBencode(bencodedValue: string): BEncodeValue {
         return object
     } 
     
-    throw new Error("Only strings are supported at the moment");
+    throw new Error("Invalid Bencode string");
 }
 
 function parseTorrentFile(fileName: string){
